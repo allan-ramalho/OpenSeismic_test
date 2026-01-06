@@ -1,7 +1,8 @@
 
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { SeismicDataset, ProcessingState, Horizon, HorizonPoint } from '../types';
-import { findLocalPeak } from '../utils/dsp';
+import { findLocalPeak, calculateAVOCurve } from '../utils/dsp';
+import { LineChart, Activity } from 'lucide-react';
 
 interface Props {
   dataset: SeismicDataset;
@@ -14,6 +15,16 @@ const SeismicCanvas: React.FC<Props> = ({ dataset, config, horizons, onAddPoint 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0, show: false, snapY: 0, isPeak: false });
+
+  const activeHorizon = useMemo(() => 
+    horizons.find(h => h.id === config.activeHorizonId),
+    [horizons, config.activeHorizonId]
+  );
+
+  const avoData = useMemo(() => 
+    calculateAVOCurve(dataset, activeHorizon),
+    [dataset, activeHorizon]
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -44,7 +55,7 @@ const SeismicCanvas: React.FC<Props> = ({ dataset, config, horizons, onAddPoint 
       const traceWidth = w / traces.length;
       const sampleHeight = h / numSamples;
 
-      // 1. Draw Seismic Data (Density)
+      // 1. Draw Seismic Data
       if (!config.isWiggle) {
         traces.forEach((trace, i) => {
           const x = i * traceWidth;
@@ -52,7 +63,6 @@ const SeismicCanvas: React.FC<Props> = ({ dataset, config, horizons, onAddPoint 
             if (Math.abs(val) < 0.005) return;
             const y = j * sampleHeight;
             const norm = Math.max(-1, Math.min(1, val * config.gain));
-            // Escala de cor clássica Sísmica: Azul (negativo) -> Branco -> Vermelho (positivo)
             if (norm > 0) {
               ctx.fillStyle = `rgb(${255}, ${Math.floor(255 - norm * 200)}, ${Math.floor(255 - norm * 200)})`;
             } else {
@@ -62,7 +72,6 @@ const SeismicCanvas: React.FC<Props> = ({ dataset, config, horizons, onAddPoint 
           });
         });
       } else {
-        // Wiggle with variable area
         traces.forEach((trace, i) => {
           const baseX = (i + 0.5) * traceWidth;
           const ampScale = traceWidth * config.gain * 1.5;
@@ -75,38 +84,64 @@ const SeismicCanvas: React.FC<Props> = ({ dataset, config, horizons, onAddPoint 
         });
       }
 
-      // 2. Draw Horizons
+      // 2. Draw Horizons with AVO Highlight
       horizons.forEach(horizon => {
         if (!horizon.isVisible || horizon.points.length === 0) return;
         
-        ctx.beginPath();
-        ctx.strokeStyle = horizon.color;
-        ctx.lineWidth = 2.0;
-        ctx.setLineDash([]);
-        
         const sortedPoints = [...horizon.points].sort((a, b) => a.traceIndex - b.traceIndex);
-        sortedPoints.forEach((p, idx) => {
-          const x = (p.traceIndex + 0.5) * traceWidth;
-          const y = p.sampleIndex * sampleHeight;
-          if (idx === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        });
-        ctx.stroke();
+        const isActive = config.activeHorizonId === horizon.id;
+        
+        // Find max amplitude for relative scaling in this horizon
+        const maxAbsAmp = Math.max(...sortedPoints.map(p => Math.abs(p.amplitude))) || 1;
 
-        // Draw individual points if zoomed in or active
-        if (config.activeHorizonId === horizon.id) {
+        for (let i = 0; i < sortedPoints.length - 1; i++) {
+          const p1 = sortedPoints[i];
+          const p2 = sortedPoints[i+1];
+          const x1 = (p1.traceIndex + 0.5) * traceWidth;
+          const y1 = p1.sampleIndex * sampleHeight;
+          const x2 = (p2.traceIndex + 0.5) * traceWidth;
+          const y2 = p2.sampleIndex * sampleHeight;
+
+          ctx.beginPath();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+          
+          if (isActive) {
+            // AVO Highlighting: Color depends on normalized amplitude
+            const norm = Math.abs(p1.amplitude) / maxAbsAmp;
+            // Map 0 -> Background Color, 1 -> Horizon Color
+            ctx.strokeStyle = `rgba(255, 255, 255, ${0.3 + norm * 0.7})`;
+            ctx.lineWidth = 1.5 + (norm * 2);
+            ctx.setLineDash([]);
+          } else {
+            ctx.strokeStyle = horizon.color;
+            ctx.lineWidth = 1.0;
+            ctx.setLineDash([4, 2]);
+          }
+          ctx.stroke();
+        }
+
+        if (isActive) {
            sortedPoints.forEach(p => {
+             const norm = Math.abs(p.amplitude) / maxAbsAmp;
              ctx.fillStyle = horizon.color;
              ctx.beginPath();
-             ctx.arc((p.traceIndex + 0.5) * traceWidth, p.sampleIndex * sampleHeight, 2, 0, Math.PI * 2);
+             ctx.arc((p.traceIndex + 0.5) * traceWidth, p.sampleIndex * sampleHeight, 2 + norm * 3, 0, Math.PI * 2);
              ctx.fill();
+             
+             // Glow effect for high amplitude AVO points
+             if (norm > 0.8) {
+               ctx.strokeStyle = 'white';
+               ctx.lineWidth = 0.5;
+               ctx.stroke();
+             }
            });
         }
       });
 
       // 3. Grid Lines
-      ctx.fillStyle = 'rgba(255,255,255,0.2)';
-      ctx.font = '8px monospace';
+      ctx.fillStyle = 'rgba(255,255,255,0.1)';
+      ctx.font = '7px monospace';
       for (let s = 0; s < numSamples; s += 100) {
         const y = s * sampleHeight;
         ctx.fillRect(0, y, w, 0.5);
@@ -158,8 +193,13 @@ const SeismicCanvas: React.FC<Props> = ({ dataset, config, horizons, onAddPoint 
     }
   };
 
+  const maxOffset = useMemo(() => 
+    dataset.traces.length > 0 ? Math.max(...dataset.traces.map(t => t.header.offset)) : 6000,
+    [dataset]
+  );
+
   return (
-    <div ref={containerRef} className="w-full h-full relative bg-[#020617] cursor-crosshair group">
+    <div ref={containerRef} className="w-full h-full relative bg-[#020617] cursor-crosshair group overflow-hidden">
       <canvas 
         ref={canvasRef} 
         className="absolute inset-0 block" 
@@ -168,6 +208,41 @@ const SeismicCanvas: React.FC<Props> = ({ dataset, config, horizons, onAddPoint 
         onMouseLeave={() => setMousePos(p => ({ ...p, show: false }))}
       />
       
+      {/* HUD - AVO Mini Chart Overlay */}
+      {config.activeHorizonId && activeHorizon && (
+        <div className="absolute top-4 right-4 w-48 h-32 bg-black/80 border border-white/10 rounded-2xl p-3 flex flex-col gap-2 backdrop-blur-xl pointer-events-none shadow-2xl">
+          <div className="flex items-center justify-between">
+            <span className="text-[8px] font-bold text-slate-500 uppercase flex items-center gap-1"><LineChart className="w-3 h-3 text-blue-500" /> AVO HUD</span>
+            <span className="text-[8px] text-blue-400 font-bold">{activeHorizon.name}</span>
+          </div>
+          <div className="flex-1 relative border-l border-b border-white/5 flex items-end overflow-hidden">
+             {avoData?.points.map((p, i) => (
+               <div 
+                 key={i} 
+                 className="absolute w-1 h-1 bg-amber-500 rounded-full" 
+                 style={{ 
+                   left: `${(p.offset / maxOffset) * 100}%`, 
+                   bottom: `${p.normAmplitude * 100}%` 
+                 }} 
+               />
+             ))}
+             {avoData?.regression && (
+               <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible">
+                 <line 
+                   x1="0%" 
+                   y1={`${(1 - avoData.regression.intercept) * 100}%`} 
+                   x2="100%" 
+                   y2={`${(1 - (avoData.regression.intercept + avoData.regression.slope * maxOffset)) * 100}%`} 
+                   stroke="rgba(255,255,255,0.2)" 
+                   strokeWidth="1" 
+                 />
+               </svg>
+             )}
+          </div>
+          <div className="flex justify-between text-[7px] text-slate-600 font-bold uppercase"><span>Offset</span><span>{avoData?.points.length || 0} Pts</span></div>
+        </div>
+      )}
+
       {/* Precision Crosshair UI */}
       {mousePos.show && (
         <>

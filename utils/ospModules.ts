@@ -1,4 +1,3 @@
-
 import { OSPModule } from '../types';
 
 export const MODULE_LIBRARY: OSPModule[] = [
@@ -65,12 +64,31 @@ export const MODULE_LIBRARY: OSPModule[] = [
     }
   },
   {
+    id: 'nmo_corr',
+    name: 'NMO Correction',
+    type: 'Imaging',
+    description: 'Normal Moveout correction with linear interpolation and stretch mute.',
+    params: {
+      velocity: { label: 'Vrms (m/s)', value: 2000, type: 'number', min: 500, max: 5000 },
+      stretchLimit: { label: 'Stretch Mute %', value: 0.7, type: 'number', min: 0.1, max: 2.0 }
+    }
+  },
+  {
     id: 'v_stack',
     name: 'Velocity Stack',
     type: 'Imaging',
     description: 'NMO correction and trace stacking.',
     params: {
       velocity: { label: 'RMS Velocity', value: 2150, type: 'number', min: 1000, max: 5000 }
+    }
+  },
+  {
+    id: 'inversion',
+    name: 'Recursive Inversion',
+    type: 'Interpretation',
+    description: 'Convert seismic reflection traces into Acoustic Impedance (AI).',
+    params: {
+      initialImpedance: { label: 'Bg Impedance', value: 3000, type: 'number', min: 1000, max: 10000 }
     }
   }
 ];

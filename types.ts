@@ -1,4 +1,3 @@
-
 export interface SeismicTrace {
   id: number;
   data: number[];
@@ -53,7 +52,7 @@ export interface Horizon {
   isVisible: boolean;
 }
 
-export type WorkspaceTab = 'section' | 'map' | 'spectral' | 'avo';
+export type WorkspaceTab = 'section' | 'map' | 'spectral' | 'avo' | 'velocity';
 
 export interface ProcessingState {
   gain: number;
@@ -72,4 +71,13 @@ export interface ProcessingState {
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+}
+
+export interface TreeItem {
+  id: string;
+  label: string;
+  type: 'folder' | 'dataset' | 'flow' | 'horizon' | 'report';
+  children?: TreeItem[];
+  isOpen?: boolean;
+  color?: string; // Para horizontes
 }

@@ -65,10 +65,34 @@ export const calculateAVOCurve = (dataset: SeismicDataset | null, horizon: any) 
   if (points.length === 0) return null;
 
   const maxAmp = Math.max(...points.map((p: any) => p.amplitude));
-  return points.map((p: any) => ({
+  const result = points.map((p: any) => ({
     ...p,
     normAmplitude: p.amplitude / (maxAmp || 1)
   }));
+
+  // Calculate Linear Regression (P, G)
+  const n = result.length;
+  if (n >= 2) {
+    let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+    result.forEach(p => {
+      const x = p.offset;
+      const y = p.normAmplitude;
+      sumX += x;
+      sumY += y;
+      sumXY += x * y;
+      sumX2 += x * x;
+    });
+    
+    const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+    const intercept = (sumY - slope * sumX) / n;
+    
+    return {
+      points: result,
+      regression: { slope, intercept }
+    };
+  }
+
+  return { points: result, regression: null };
 };
 
 export const autoTrackHorizon = (
@@ -192,6 +216,72 @@ export const applyDecon = (trace: number[], opLength: number): number[] => {
     return out;
 };
 
+/**
+ * Professional Normal Moveout (NMO) Correction
+ * Includes Linear Interpolation and Stretch Mute protection.
+ */
+export const applyNMO = (trace: number[], offset: number, velocity: number, sampleInterval: number, stretchLimit: number = 0.7): number[] => {
+  const n = trace.length;
+  const out = new Array(n).fill(0);
+  for (let s = 0; s < n; s++) {
+    const t0 = s * sampleInterval;
+    const t_nmo = Math.sqrt(t0 * t0 + (offset * offset) / (velocity * velocity));
+    
+    // Stretch Check: dt/dt0 = t/t0. If t/t0 > (1 + stretchLimit), mute.
+    if (t0 > 0 && (t_nmo / t0 - 1) > stretchLimit) continue;
+
+    const s_nmo_float = t_nmo / sampleInterval;
+    const s_floor = Math.floor(s_nmo_float);
+    const s_ceil = s_floor + 1;
+    
+    if (s_ceil < n) {
+      // Linear Interpolation
+      const frac = s_nmo_float - s_floor;
+      out[s] = (1 - frac) * trace[s_floor] + frac * trace[s_ceil];
+    }
+  }
+  return out;
+};
+
+/**
+ * Calculates Semblance (Coherence) Map for Velocity Analysis.
+ * Input: CMP Gather. Output: 2D Grid (Time x Velocity).
+ */
+export const calculateSemblance = (traces: SeismicTrace[], sampleInterval: number, vMin: number, vMax: number, vStep: number): number[][] => {
+  if (traces.length === 0) return [];
+  const nSamples = traces[0].data.length;
+  const velocities = [];
+  for (let v = vMin; v <= vMax; v += vStep) velocities.push(v);
+  
+  const semblance = Array.from({ length: velocities.length }, () => new Array(nSamples).fill(0));
+  const win = 15; // Vertical window for smoothing semblance
+
+  velocities.forEach((v, vIdx) => {
+    // Apply NMO for this trial velocity
+    const nmoTraces = traces.map(t => applyNMO(t.data, t.header.offset, v, sampleInterval, 10.0));
+    
+    for (let s = win; s < nSamples - win; s++) {
+      let num = 0; // Sum of amplitudes squared
+      let den = 0; // Sum of (amplitudes squared)
+      
+      for (let i = s - win; i <= s + win; i++) {
+        let sumAmp = 0;
+        let sumSqAmp = 0;
+        for (let tIdx = 0; tIdx < traces.length; tIdx++) {
+          const val = nmoTraces[tIdx][i];
+          sumAmp += val;
+          sumSqAmp += val * val;
+        }
+        num += sumAmp * sumAmp;
+        den += traces.length * sumSqAmp;
+      }
+      semblance[vIdx][s] = den > 0 ? num / den : 0;
+    }
+  });
+
+  return semblance;
+};
+
 export const applyStack = (traces: SeismicTrace[], velocity: number, sampleInterval: number): SeismicTrace[] => {
     if (traces.length === 0) return traces;
     const numSamples = traces[0].data.length;
@@ -199,15 +289,29 @@ export const applyStack = (traces: SeismicTrace[], velocity: number, sampleInter
     
     traces.forEach(trace => {
         const offset = trace.header.offset;
+        const nmoData = applyNMO(trace.data, offset, velocity, sampleInterval);
         for (let s = 0; s < numSamples; s++) {
-            const t0 = s * sampleInterval;
-            const t_nmo = Math.sqrt(t0 * t0 + (offset * offset) / (velocity * velocity));
-            const s_nmo = Math.round(t_nmo / sampleInterval);
-            if (s_nmo < numSamples) {
-                stackedData[s] += trace.data[s_nmo];
-            }
+            stackedData[s] += nmoData[s];
         }
     });
 
     return traces.map(t => ({...t, data: stackedData.map(v => v / traces.length)}));
+};
+
+export const applyInversion = (trace: number[], initialImpedance: number): number[] => {
+  const n = trace.length;
+  const impedance = new Array(n).fill(0);
+  impedance[0] = initialImpedance;
+
+  const maxAmp = Math.max(...trace.map(Math.abs)) || 1;
+  const scaledTrace = trace.map(v => (v / maxAmp) * 0.15);
+
+  for (let i = 0; i < n - 1; i++) {
+    const r = scaledTrace[i];
+    const denominator = Math.max(0.001, 1 - r);
+    impedance[i + 1] = impedance[i] * (1 + r) / denominator;
+  }
+
+  const mean = impedance.reduce((a, b) => a + b, 0) / n;
+  return impedance.map(v => (v - mean) + initialImpedance);
 };

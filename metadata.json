@@ -1,5 +1,5 @@
 {
-  "name": "SeismicStream_teste",
+  "name": "OpenSeismicProcessing",
   "description": "A high-performance, AI-powered seismic data processing and visualization platform for modern geophysics workflows.",
   "requestFramePermissions": []
 }
