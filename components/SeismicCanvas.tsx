@@ -14,6 +14,7 @@ const SeismicCanvas: React.FC<Props> = ({ dataset, config, horizons, onAddPoint 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
+  // Transformation State for Interactive Pan/Zoom
   const [transform, setTransform] = useState({ x: 0, y: 0, scaleX: 1, scaleY: 1 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
@@ -30,9 +31,6 @@ const SeismicCanvas: React.FC<Props> = ({ dataset, config, horizons, onAddPoint 
     link.click();
   };
 
-  const AXIS_MARGIN = 50;
-  const COLORBAR_WIDTH = 40;
-
   const render = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || !containerRef.current) return;
@@ -40,42 +38,31 @@ const SeismicCanvas: React.FC<Props> = ({ dataset, config, horizons, onAddPoint 
     if (!ctx) return;
 
     const { traces, numSamples } = dataset;
-    const fullW = canvas.width / window.devicePixelRatio;
-    const fullH = canvas.height / window.devicePixelRatio;
-    
-    // Viewport for seismic data (subtracting space for axes and colorbar)
-    const viewW = fullW - AXIS_MARGIN - COLORBAR_WIDTH;
-    const viewH = fullH - AXIS_MARGIN;
+    const w = canvas.width / window.devicePixelRatio;
+    const h = canvas.height / window.devicePixelRatio;
 
     ctx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
     ctx.fillStyle = '#020617';
-    ctx.fillRect(0, 0, fullW, fullH);
+    ctx.fillRect(0, 0, w, h);
 
-    // Draw Background Grid for Axes Areas
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(0, 0, AXIS_MARGIN, fullH); // Left Axis BG
-    ctx.fillRect(0, fullH - AXIS_MARGIN, fullW, AXIS_MARGIN); // Bottom Axis BG
-
-    // -- RENDER SEISMIC DATA --
+    // Apply viewport transformation
     ctx.save();
-    // Clipping region for seismic data
-    ctx.beginPath();
-    ctx.rect(AXIS_MARGIN, 0, viewW, viewH);
-    ctx.clip();
-    
-    ctx.translate(AXIS_MARGIN + transform.x, transform.y);
+    ctx.translate(transform.x, transform.y);
     ctx.scale(transform.scaleX, transform.scaleY);
 
-    const traceWidth = viewW / traces.length;
-    const sampleHeight = viewH / numSamples;
+    const traceWidth = w / traces.length;
+    const sampleHeight = h / numSamples;
 
+    // 1. Draw Seismic Data with High Quality
     if (!config.isWiggle) {
+      // Density Map
       traces.forEach((trace, i) => {
         const x = i * traceWidth;
         trace.data.forEach((val, j) => {
           if (Math.abs(val) < 0.001) return;
           const y = j * sampleHeight;
           const norm = Math.max(-1, Math.min(1, val * config.gain));
+          
           if (norm > 0) {
             const intensity = Math.floor(norm * 255);
             ctx.fillStyle = `rgb(255, ${255 - intensity}, ${255 - intensity})`;
@@ -83,29 +70,48 @@ const SeismicCanvas: React.FC<Props> = ({ dataset, config, horizons, onAddPoint 
             const intensity = Math.floor(Math.abs(norm) * 255);
             ctx.fillStyle = `rgb(${255 - intensity}, ${255 - intensity}, 255)`;
           }
-          ctx.fillRect(x, y, traceWidth + 0.3, sampleHeight + 0.3);
+          // Optimization: Draw larger pixels to avoid sub-pixel gaps
+          ctx.fillRect(x, y, traceWidth + 0.5, sampleHeight + 0.5);
         });
       });
     } else {
+      // Wiggle Traves
       traces.forEach((trace, i) => {
         const baseX = (i + 0.5) * traceWidth;
         const ampScale = traceWidth * config.gain * 2.0;
+        
         ctx.beginPath();
         ctx.strokeStyle = 'rgba(255,255,255,0.4)';
         ctx.lineWidth = 0.5 / transform.scaleX;
         ctx.moveTo(baseX + trace.data[0] * ampScale, 0);
-        trace.data.forEach((v, j) => ctx.lineTo(baseX + v * ampScale, j * sampleHeight));
+        trace.data.forEach((v, j) => {
+          ctx.lineTo(baseX + v * ampScale, j * sampleHeight);
+        });
         ctx.stroke();
+
+        // Optional: Area fill for positives
+        ctx.beginPath();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+        ctx.moveTo(baseX, 0);
+        trace.data.forEach((v, j) => {
+          if (v > 0) ctx.lineTo(baseX + v * ampScale, j * sampleHeight);
+          else ctx.lineTo(baseX, j * sampleHeight);
+        });
+        ctx.fill();
       });
     }
 
+    // 2. Draw Horizons
     horizons.forEach(horizon => {
       if (!horizon.isVisible || horizon.points.length === 0) return;
       const points = [...horizon.points].sort((a, b) => a.traceIndex - b.traceIndex);
       const isActive = config.activeHorizonId === horizon.id;
+
       ctx.beginPath();
       ctx.strokeStyle = horizon.color;
       ctx.lineWidth = isActive ? 3 / Math.max(transform.scaleX, transform.scaleY) : 1 / transform.scaleX;
+      if (!isActive) ctx.setLineDash([5, 5]);
+      
       points.forEach((p, i) => {
         const px = (p.traceIndex + 0.5) * traceWidth;
         const py = p.sampleIndex * sampleHeight;
@@ -113,60 +119,30 @@ const SeismicCanvas: React.FC<Props> = ({ dataset, config, horizons, onAddPoint 
         else ctx.lineTo(px, py);
       });
       ctx.stroke();
+      ctx.setLineDash([]);
+
+      if (isActive) {
+        points.forEach(p => {
+          ctx.fillStyle = horizon.color;
+          ctx.beginPath();
+          ctx.arc((p.traceIndex + 0.5) * traceWidth, p.sampleIndex * sampleHeight, 2 / transform.scaleX, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
     });
 
     ctx.restore();
 
-    // -- RENDER EXTERNAL AXES --
-    ctx.fillStyle = '#64748b';
-    ctx.font = '9px JetBrains Mono';
-    ctx.textAlign = 'right';
-    
-    // Y Axis (Time)
-    for (let s = 0; s < numSamples; s += 100) {
+    // 3. Grid Lines (Fixed Position HUD)
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.font = '10px JetBrains Mono';
+    for (let s = 0; s < numSamples; s += 200) {
       const y = (s * sampleHeight) * transform.scaleY + transform.y;
-      if (y >= 0 && y <= viewH) {
-        ctx.fillText(`${(s * dataset.sampleInterval).toFixed(0)}`, AXIS_MARGIN - 8, y + 4);
-        ctx.fillRect(AXIS_MARGIN - 4, y, 4, 0.5);
+      if (y > 0 && y < h) {
+        ctx.fillRect(0, y, w, 0.5);
+        ctx.fillText(`${(s * dataset.sampleInterval).toFixed(0)}ms`, 10, y - 5);
       }
     }
-    
-    // X Axis (Traces)
-    ctx.textAlign = 'center';
-    for (let t = 0; t < traces.length; t += Math.floor(20 / transform.scaleX) || 10) {
-      const x = (t * traceWidth) * transform.scaleX + transform.x + AXIS_MARGIN;
-      if (x >= AXIS_MARGIN && x <= AXIS_MARGIN + viewW) {
-        ctx.fillText(`${t}`, x, viewH + 15);
-        ctx.fillRect(x, viewH, 0.5, 4);
-      }
-    }
-
-    // -- RENDER COLORBAR --
-    const cbX = fullW - COLORBAR_WIDTH + 10;
-    const cbY = 40;
-    const cbH = viewH - 80;
-    const cbW = 12;
-
-    const grad = ctx.createLinearGradient(0, cbY, 0, cbY + cbH);
-    grad.addColorStop(0, '#ff0000'); // Positive max
-    grad.addColorStop(0.5, '#ffffff'); // Zero
-    grad.addColorStop(1, '#0000ff'); // Negative max
-    ctx.fillStyle = grad;
-    ctx.fillRect(cbX, cbY, cbW, cbH);
-    ctx.strokeStyle = '#ffffff22';
-    ctx.strokeRect(cbX, cbY, cbW, cbH);
-
-    ctx.fillStyle = '#94a3b8';
-    ctx.textAlign = 'left';
-    ctx.fillText('+', cbX + cbW + 4, cbY + 8);
-    ctx.fillText('0', cbX + cbW + 4, cbY + cbH / 2 + 4);
-    ctx.fillText('-', cbX + cbW + 4, cbY + cbH - 2);
-    ctx.save();
-    ctx.translate(cbX - 8, cbY + cbH / 2);
-    ctx.rotate(-Math.PI / 2);
-    ctx.fillText('AMPLITUDE', 0, 0);
-    ctx.restore();
-
   }, [dataset, config, horizons, transform]);
 
   useEffect(() => {
@@ -185,6 +161,7 @@ const SeismicCanvas: React.FC<Props> = ({ dataset, config, horizons, onAddPoint 
     return () => resizeObserver.disconnect();
   }, [render]);
 
+  // Event Handlers
   const handleWheel = (e: WheelEvent) => {
     e.preventDefault();
     const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
@@ -216,37 +193,41 @@ const SeismicCanvas: React.FC<Props> = ({ dataset, config, horizons, onAddPoint 
     const my = e.clientY - rect.top;
 
     if (isDragging) {
-      setTransform(prev => ({ ...prev, x: e.clientX - dragStart.x, y: e.clientY - dragStart.y }));
+      setTransform(prev => ({
+        ...prev,
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y
+      }));
     }
 
-    const worldX = (mx - AXIS_MARGIN - transform.x) / transform.scaleX;
+    // Picker Logic
+    const worldX = (mx - transform.x) / transform.scaleX;
     const worldY = (my - transform.y) / transform.scaleY;
-    const viewW = rect.width - AXIS_MARGIN - COLORBAR_WIDTH;
-    const viewH = rect.height - AXIS_MARGIN;
-
-    const traceIdx = Math.floor((worldX / viewW) * dataset.traces.length);
-    const rawSampleIdx = Math.floor((worldY / viewH) * dataset.numSamples);
+    const traceIdx = Math.floor((worldX / rect.width) * dataset.traces.length);
+    const rawSampleIdx = Math.floor((worldY / rect.height) * dataset.numSamples);
     
     let snapY = my;
     if (dataset.traces[traceIdx]) {
       const snappedIdx = findLocalPeak(dataset.traces[traceIdx].data, rawSampleIdx, 20);
-      snapY = ((snappedIdx / dataset.numSamples) * viewH) * transform.scaleY + transform.y;
+      snapY = ((snappedIdx / dataset.numSamples) * rect.height) * transform.scaleY + transform.y;
     }
-    setMousePos({ x: mx, y: my, show: mx > AXIS_MARGIN && mx < rect.width - COLORBAR_WIDTH && my < viewH, snapY });
+    setMousePos({ x: mx, y: my, show: true, snapY });
   };
+
+  const handleMouseUp = () => setIsDragging(false);
 
   const handleClick = (e: React.MouseEvent) => {
     if (!config.isPickerActive || !config.activeHorizonId) return;
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const viewW = rect.width - AXIS_MARGIN - COLORBAR_WIDTH;
-    const viewH = rect.height - AXIS_MARGIN;
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    const worldX = (mx - transform.x) / transform.scaleX;
+    const worldY = (my - transform.y) / transform.scaleY;
     
-    const worldX = (e.clientX - rect.left - AXIS_MARGIN - transform.x) / transform.scaleX;
-    const worldY = (e.clientY - rect.top - transform.y) / transform.scaleY;
-    
-    const traceIdx = Math.floor((worldX / viewW) * dataset.traces.length);
-    const rawSampleIdx = Math.floor((worldY / viewH) * dataset.numSamples);
+    const traceIdx = Math.floor((worldX / rect.width) * dataset.traces.length);
+    const rawSampleIdx = Math.floor((worldY / rect.height) * dataset.numSamples);
     
     if (dataset.traces[traceIdx]) {
       const snappedIdx = findLocalPeak(dataset.traces[traceIdx].data, rawSampleIdx, 20);
@@ -265,33 +246,40 @@ const SeismicCanvas: React.FC<Props> = ({ dataset, config, horizons, onAddPoint 
         ref={canvasRef} 
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
-        onMouseUp={() => setIsDragging(false)}
+        onMouseUp={handleMouseUp}
         onMouseLeave={() => { setIsDragging(false); setMousePos(p => ({ ...p, show: false })); }}
         onClick={handleClick}
         className={`absolute inset-0 block ${config.isPickerActive ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`}
       />
 
-      <div className="absolute top-4 left-16 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+      {/* Interactive Controls Overlay */}
+      <div className="absolute top-4 left-4 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
         <div className="flex bg-slate-900/90 backdrop-blur border border-white/10 rounded-xl overflow-hidden p-1 shadow-2xl">
           <ControlButton icon={ZoomIn} onClick={() => setTransform(p => ({ ...p, scaleX: p.scaleX * 1.2, scaleY: p.scaleY * 1.2 }))} title="Zoom In" />
           <ControlButton icon={ZoomOut} onClick={() => setTransform(p => ({ ...p, scaleX: p.scaleX * 0.8, scaleY: p.scaleY * 0.8 }))} title="Zoom Out" />
           <ControlButton icon={Maximize} onClick={resetZoom} title="Reset View" />
           <div className="w-px bg-white/10 mx-1" />
-          <ControlButton icon={Download} onClick={exportAsImage} title="Export PNG" />
+          <ControlButton icon={Download} onClick={exportAsImage} title="Export as PNG" />
+        </div>
+        <div className="bg-slate-900/90 backdrop-blur border border-white/10 rounded-xl px-3 py-1.5 flex items-center gap-2 shadow-xl">
+           <Move className="w-3 h-3 text-slate-500" />
+           <span className="text-[9px] font-bold text-slate-400 uppercase">Drag to Pan / Scroll to Zoom</span>
         </div>
       </div>
 
-      <div className="absolute bottom-16 right-16 bg-black/60 backdrop-blur border border-white/5 rounded-lg px-3 py-1 text-[9px] font-mono text-slate-400 pointer-events-none z-10">
-        Z: {transform.scaleX.toFixed(2)}x
+      {/* HUD Info */}
+      <div className="absolute bottom-4 right-4 bg-black/60 backdrop-blur border border-white/5 rounded-lg px-3 py-1 text-[9px] font-mono text-slate-400 pointer-events-none">
+        X: {mousePos.x.toFixed(0)} Y: {mousePos.y.toFixed(0)} | Scale: {transform.scaleX.toFixed(2)}x
       </div>
 
+      {/* Crosshair Overlay */}
       {mousePos.show && (
         <>
-          <div className="absolute top-0 bottom-[50px] w-px bg-white/20 pointer-events-none" style={{ left: mousePos.x }} />
-          <div className="absolute left-[50px] right-[40px] h-px bg-white/20 pointer-events-none" style={{ top: mousePos.y }} />
+          <div className="absolute top-0 bottom-0 w-px bg-white/20 pointer-events-none" style={{ left: mousePos.x }} />
+          <div className="absolute left-0 right-0 h-px bg-white/20 pointer-events-none" style={{ top: mousePos.y }} />
           {config.isPickerActive && (
              <div className="absolute w-6 h-6 border border-amber-500 rounded-full flex items-center justify-center transform -translate-x-1/2 -translate-y-1/2 pointer-events-none" style={{ left: mousePos.x, top: mousePos.snapY }}>
-                <div className="w-1.5 h-1.5 bg-amber-500 rounded-full" />
+                <div className="w-1.5 h-1.5 bg-amber-500 rounded-full shadow-lg" />
              </div>
           )}
         </>
