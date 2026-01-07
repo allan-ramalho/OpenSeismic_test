@@ -2,54 +2,45 @@ import { OSPModule } from '../types';
 
 export const MODULE_LIBRARY: OSPModule[] = [
   {
-    id: 'read_segy',
-    name: 'Read SEGY',
-    type: 'IO',
-    description: 'Import seismic data from SEGY file.',
-    params: {
-      file: { label: 'Source File', value: 'data_01.segy', type: 'string' }
-    }
-  },
-  {
     id: 'bandpass',
     name: 'Bandpass Filter',
     type: 'Filter',
-    description: 'Apply zero-phase frequency filtering to traces.',
+    description: 'Apply frequency filtering to traces.',
     params: {
-      lowCut: { label: 'Low Cut (Hz)', value: 10, type: 'number', min: 0, max: 100 },
-      highCut: { label: 'High Cut (Hz)', value: 65, type: 'number', min: 20, max: 200 }
+      lowCut: { label: 'Low Cut (Hz)', value: 12, type: 'number', min: 0, max: 100 },
+      highCut: { label: 'High Cut (Hz)', value: 70, type: 'number', min: 20, max: 250 }
     }
   },
   {
     id: 'tgain',
     name: 'T-Gain Compensation',
     type: 'Signal',
-    description: 'Compensate for deep signal attenuation using exponential gain.',
+    description: 'Deep signal attenuation compensation.',
     params: {
-      exponent: { label: 'Gain Power (n)', value: 1.5, type: 'number', min: 0, max: 5.0 }
+      exponent: { label: 'Gain Power (n)', value: 1.8, type: 'number', min: 0, max: 5.0 }
     }
   },
   {
     id: 'agc',
     name: 'AGC',
     type: 'Signal',
-    description: 'Automatic Gain Control for amplitude balancing.',
+    description: 'Automatic Gain Control balancing.',
     params: {
-      window: { label: 'Window (ms)', value: 400, type: 'number', min: 50, max: 2000 }
+      window: { label: 'Window (ms)', value: 500, type: 'number', min: 50, max: 2000 }
     }
   },
   {
     id: 'whitening',
     name: 'Spectral Whitening',
     type: 'Signal',
-    description: 'Enhance high frequencies and flatten spectrum.',
+    description: 'Enhance high frequencies.',
     params: {}
   },
   {
     id: 'mixing',
     name: 'Trace Mixing',
     type: 'Imaging',
-    description: 'Lateral coherence enhancement by trace summation.',
+    description: 'Lateral coherence enhancement.',
     params: {
       numTraces: { label: 'Mix Span', value: 3, type: 'number', min: 1, max: 11 }
     }
@@ -58,19 +49,19 @@ export const MODULE_LIBRARY: OSPModule[] = [
     id: 'decon',
     name: 'Spiking Decon',
     type: 'Signal',
-    description: 'Predictive deconvolution to compress wavelets.',
+    description: 'Wavelet compression.',
     params: {
-      opLength: { label: 'Operator Length', value: 120, type: 'number', min: 10, max: 500 }
+      opLength: { label: 'Operator Length', value: 100, type: 'number', min: 10, max: 500 }
     }
   },
   {
     id: 'nmo_corr',
     name: 'NMO Correction',
     type: 'Imaging',
-    description: 'Normal Moveout correction with linear interpolation and stretch mute.',
+    description: 'Normal Moveout correction.',
     params: {
-      velocity: { label: 'Vrms (m/s)', value: 2000, type: 'number', min: 500, max: 5000 },
-      stretchLimit: { label: 'Stretch Mute %', value: 0.7, type: 'number', min: 0.1, max: 2.0 }
+      velocity: { label: 'Vrms (m/s)', value: 2200, type: 'number', min: 500, max: 6000 },
+      stretchLimit: { label: 'Stretch Mute %', value: 0.8, type: 'number', min: 0.1, max: 3.0 }
     }
   },
   {
@@ -79,16 +70,16 @@ export const MODULE_LIBRARY: OSPModule[] = [
     type: 'Imaging',
     description: 'NMO correction and trace stacking.',
     params: {
-      velocity: { label: 'RMS Velocity', value: 2150, type: 'number', min: 1000, max: 5000 }
+      velocity: { label: 'RMS Velocity', value: 2400, type: 'number', min: 1000, max: 6000 }
     }
   },
   {
     id: 'inversion',
     name: 'Recursive Inversion',
     type: 'Interpretation',
-    description: 'Convert seismic reflection traces into Acoustic Impedance (AI).',
+    description: 'Convert seismic to Acoustic Impedance.',
     params: {
-      initialImpedance: { label: 'Bg Impedance', value: 3000, type: 'number', min: 1000, max: 10000 }
+      initialImpedance: { label: 'Bg Impedance', value: 3500, type: 'number', min: 1000, max: 12000 }
     }
   }
 ];
