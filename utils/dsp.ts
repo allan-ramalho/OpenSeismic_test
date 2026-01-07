@@ -46,11 +46,11 @@ export const calculateAverageSpectrum = (traces: SeismicTrace[]): number[] => {
   }
   
   const max = Math.max(...avgSpectrum);
-  return avgSpectrum.map(v => (v / (max || 1)) * 100);
+  return avgSpectrum.map(v => v / (max || 1));
 };
 
 export const calculateAVOCurve = (dataset: SeismicDataset | null, horizon: any) => {
-  if (!dataset || !horizon || horizon.points.length < 2) return null;
+  if (!dataset || !horizon || !horizon.points || horizon.points.length < 2) return null;
   
   const points = horizon.points.map((p: any) => {
     const trace = dataset.traces[p.traceIndex];
@@ -62,73 +62,45 @@ export const calculateAVOCurve = (dataset: SeismicDataset | null, horizon: any) 
     };
   }).filter(Boolean).sort((a: any, b: any) => a.offset - b.offset);
 
-  if (points.length === 0) return null;
+  if (points.length < 2) return null;
 
-  const maxAmp = Math.max(...points.map((p: any) => p.amplitude));
+  const maxAmp = Math.max(...points.map((p: any) => p.amplitude)) || 1;
   const result = points.map((p: any) => ({
     ...p,
-    normAmplitude: p.amplitude / (maxAmp || 1)
+    normAmplitude: p.amplitude / maxAmp
   }));
 
-  // Calculate Linear Regression (P, G)
   const n = result.length;
-  if (n >= 2) {
-    let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
-    result.forEach(p => {
-      const x = p.offset;
-      const y = p.normAmplitude;
-      sumX += x;
-      sumY += y;
-      sumXY += x * y;
-      sumX2 += x * x;
-    });
-    
-    const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
-    const intercept = (sumY - slope * sumX) / n;
-    
-    return {
-      points: result,
-      regression: { slope, intercept }
-    };
-  }
-
-  return { points: result, regression: null };
-};
-
-export const autoTrackHorizon = (
-  seed: HorizonPoint, 
-  traces: SeismicTrace[], 
-  searchWindow: number = 12,
-  maxTraces: number = 100
-): HorizonPoint[] => {
-  const points: HorizonPoint[] = [seed];
-  const directions = [-1, 1];
-  
-  directions.forEach(dir => {
-    let currentSample = seed.sampleIndex;
-    let currentAmp = Math.abs(seed.amplitude);
-    let count = 0;
-    
-    for (let i = seed.traceIndex + dir; i >= 0 && i < traces.length && count < maxTraces; i += dir) {
-      const traceData = traces[i].data;
-      const nextSample = findLocalPeak(traceData, currentSample, searchWindow);
-      const nextAmp = Math.abs(traceData[nextSample]);
-      
-      if (nextAmp < currentAmp * 0.1 || nextAmp > currentAmp * 5.0) break;
-      
-      points.push({
-        traceIndex: i,
-        sampleIndex: nextSample,
-        timeMs: nextSample * 2,
-        amplitude: traceData[nextSample]
-      });
-      currentSample = nextSample;
-      currentAmp = nextAmp;
-      count++;
-    }
+  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+  result.forEach(p => {
+    const x = p.offset;
+    const y = p.normAmplitude;
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumX2 += x * x;
   });
   
-  return points;
+  const denominator = (n * sumX2 - sumX * sumX);
+  const slope = denominator === 0 ? 0 : (n * sumXY - sumX * sumY) / denominator;
+  const intercept = (sumY - slope * sumX) / n;
+
+  // Simple R-squared
+  const yMean = sumY / n;
+  let ssTot = 0;
+  let ssRes = 0;
+  result.forEach(p => {
+    const y = p.normAmplitude;
+    const f = intercept + slope * p.offset;
+    ssTot += Math.pow(y - yMean, 2);
+    ssRes += Math.pow(y - f, 2);
+  });
+  const rSquared = ssTot === 0 ? 1 : Math.max(0, 1 - (ssRes / ssTot));
+  
+  return {
+    points: result,
+    regression: { slope, intercept, rSquared }
+  };
 };
 
 export const applyAGC = (trace: number[], windowSamples: number): number[] => {
@@ -149,7 +121,6 @@ export const applyAGC = (trace: number[], windowSamples: number): number[] => {
 };
 
 export const applyBandpass = (trace: number[], lowCut: number, highCut: number, sampleRateHz: number): number[] => {
-  if (lowCut <= 0 && highCut >= sampleRateHz / 2) return [...trace];
   const order = 31;
   const kernel = new Array(order).fill(0);
   const mid = Math.floor(order / 2);
@@ -216,26 +187,17 @@ export const applyDecon = (trace: number[], opLength: number): number[] => {
     return out;
 };
 
-/**
- * Professional Normal Moveout (NMO) Correction
- * Includes Linear Interpolation and Stretch Mute protection.
- */
 export const applyNMO = (trace: number[], offset: number, velocity: number, sampleInterval: number, stretchLimit: number = 0.7): number[] => {
   const n = trace.length;
   const out = new Array(n).fill(0);
   for (let s = 0; s < n; s++) {
     const t0 = s * sampleInterval;
     const t_nmo = Math.sqrt(t0 * t0 + (offset * offset) / (velocity * velocity));
-    
-    // Stretch Check: dt/dt0 = t/t0. If t/t0 > (1 + stretchLimit), mute.
     if (t0 > 0 && (t_nmo / t0 - 1) > stretchLimit) continue;
-
     const s_nmo_float = t_nmo / sampleInterval;
     const s_floor = Math.floor(s_nmo_float);
     const s_ceil = s_floor + 1;
-    
     if (s_ceil < n) {
-      // Linear Interpolation
       const frac = s_nmo_float - s_floor;
       out[s] = (1 - frac) * trace[s_floor] + frac * trace[s_ceil];
     }
@@ -243,10 +205,6 @@ export const applyNMO = (trace: number[], offset: number, velocity: number, samp
   return out;
 };
 
-/**
- * Calculates Semblance (Coherence) Map for Velocity Analysis.
- * Input: CMP Gather. Output: 2D Grid (Time x Velocity).
- */
 export const calculateSemblance = (traces: SeismicTrace[], sampleInterval: number, vMin: number, vMax: number, vStep: number): number[][] => {
   if (traces.length === 0) return [];
   const nSamples = traces[0].data.length;
@@ -254,16 +212,13 @@ export const calculateSemblance = (traces: SeismicTrace[], sampleInterval: numbe
   for (let v = vMin; v <= vMax; v += vStep) velocities.push(v);
   
   const semblance = Array.from({ length: velocities.length }, () => new Array(nSamples).fill(0));
-  const win = 15; // Vertical window for smoothing semblance
+  const win = 15;
 
   velocities.forEach((v, vIdx) => {
-    // Apply NMO for this trial velocity
     const nmoTraces = traces.map(t => applyNMO(t.data, t.header.offset, v, sampleInterval, 10.0));
-    
     for (let s = win; s < nSamples - win; s++) {
-      let num = 0; // Sum of amplitudes squared
-      let den = 0; // Sum of (amplitudes squared)
-      
+      let num = 0;
+      let den = 0;
       for (let i = s - win; i <= s + win; i++) {
         let sumAmp = 0;
         let sumSqAmp = 0;
@@ -278,7 +233,6 @@ export const calculateSemblance = (traces: SeismicTrace[], sampleInterval: numbe
       semblance[vIdx][s] = den > 0 ? num / den : 0;
     }
   });
-
   return semblance;
 };
 
@@ -286,15 +240,11 @@ export const applyStack = (traces: SeismicTrace[], velocity: number, sampleInter
     if (traces.length === 0) return traces;
     const numSamples = traces[0].data.length;
     const stackedData = new Array(numSamples).fill(0);
-    
     traces.forEach(trace => {
         const offset = trace.header.offset;
         const nmoData = applyNMO(trace.data, offset, velocity, sampleInterval);
-        for (let s = 0; s < numSamples; s++) {
-            stackedData[s] += nmoData[s];
-        }
+        for (let s = 0; s < numSamples; s++) stackedData[s] += nmoData[s];
     });
-
     return traces.map(t => ({...t, data: stackedData.map(v => v / traces.length)}));
 };
 
@@ -302,16 +252,12 @@ export const applyInversion = (trace: number[], initialImpedance: number): numbe
   const n = trace.length;
   const impedance = new Array(n).fill(0);
   impedance[0] = initialImpedance;
-
   const maxAmp = Math.max(...trace.map(Math.abs)) || 1;
   const scaledTrace = trace.map(v => (v / maxAmp) * 0.15);
-
   for (let i = 0; i < n - 1; i++) {
     const r = scaledTrace[i];
     const denominator = Math.max(0.001, 1 - r);
     impedance[i + 1] = impedance[i] * (1 + r) / denominator;
   }
-
-  const mean = impedance.reduce((a, b) => a + b, 0) / n;
-  return impedance.map(v => (v - mean) + initialImpedance);
+  return impedance;
 };
