@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Loader2, Sparkles, BrainCircuit } from 'lucide-react';
 import { ChatMessage, ProcessingState, ActiveModule } from '../types';
@@ -7,12 +6,11 @@ import { seismicAI } from '../services/geminiService';
 interface Props {
   processingState: ProcessingState;
   activeFlow?: ActiveModule[];
+  messages: ChatMessage[];
+  onSetMessages: (msgs: ChatMessage[]) => void;
 }
 
-const ChatPanel: React.FC<Props> = ({ processingState, activeFlow = [] }) => {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'assistant', content: "Olá! Sou seu Geophysics Co-pilot. Posso te ajudar a configurar os parâmetros do OSP ou sugerir um workflow para o seu dataset. Como posso ajudar hoje?" }
-  ]);
+const ChatPanel: React.FC<Props> = ({ processingState, activeFlow = [], messages, onSetMessages }) => {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -25,12 +23,18 @@ const ChatPanel: React.FC<Props> = ({ processingState, activeFlow = [] }) => {
     if (!input.trim() || loading) return;
     const userMsg = input;
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+    const newHistory = [...messages, { role: 'user', content: userMsg } as ChatMessage];
+    onSetMessages(newHistory);
     setLoading(true);
 
-    const response = await seismicAI.analyzeWorkflow(userMsg, activeFlow);
-    setMessages(prev => [...prev, { role: 'assistant', content: response }]);
-    setLoading(false);
+    try {
+      const response = await seismicAI.analyzeWorkflow(userMsg, activeFlow);
+      onSetMessages([...newHistory, { role: 'assistant', content: response } as ChatMessage]);
+    } catch (e) {
+      onSetMessages([...newHistory, { role: 'assistant', content: "Houve um erro técnico ao processar seu pedido. Verifique a conexão com o kernel de IA." } as ChatMessage]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

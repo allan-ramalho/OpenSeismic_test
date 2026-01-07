@@ -1,36 +1,35 @@
-
 import { GoogleGenAI } from "@google/genai";
 import { ActiveModule } from "../types";
 
 export class SeismicAIService {
   async analyzeWorkflow(query: string, currentFlow: ActiveModule[]) {
-    // Correct initialization with named parameter using the environment variable directly.
+    // Initializing with the system-provided API Key.
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     
     const flowDescription = currentFlow.length > 0 
-      ? currentFlow.map(m => `${m.name} (${JSON.stringify(m.params)})`).join(' -> ')
-      : "Nenhum módulo no fluxo ainda.";
+      ? currentFlow.map(m => `${m.name} (ID: ${m.id})`).join(' -> ')
+      : "O fluxo está vazio no momento.";
 
-    const systemPrompt = `Você é o Geophysics Co-pilot do OpenSeismicProcessing (OSP).
-    O usuário está montando um fluxo de processamento sísmico.
-    Fluxo atual: ${flowDescription}.
-    Sua tarefa é sugerir módulos, explicar o efeito físico de parâmetros (como janelas de AGC ou filtros Bandpass) e ajudar na interpretação de refletores.
-    Responda em Português do Brasil com terminologia técnica de geofísica.`;
+    const systemInstruction = `Você é o Geophysics Co-pilot do OpenSeismicProcessing (OSP).
+    Fluxo atual no canvas: ${flowDescription}.
+    Seu papel é orientar o processamento sísmico, sugerindo parâmetros para AGC, Decon, Filtros e empilhamento.
+    Use terminologia profissional de geofísica (PSTM, PSDM, CMP, NMO, etc.).
+    Responda em Português do Brasil.`;
 
     try {
       const response = await ai.models.generateContent({
         model: 'gemini-3-pro-preview',
         contents: query,
         config: {
-          systemInstruction: systemPrompt,
+          systemInstruction: systemInstruction,
           temperature: 0.7,
         }
       });
-      // Correct property access .text (not a method) for extracting output.
-      return response.text || "Não consegui analisar o fluxo agora.";
+      // Correct extraction using .text property
+      return response.text || "O modelo não retornou uma resposta válida.";
     } catch (error) {
-      console.error("Gemini Error:", error);
-      return "Erro de conexão com o serviço de inteligência geofísica.";
+      console.error("Gemini AI Kernel Error:", error);
+      return "Ocorreu um erro ao consultar o kernel de inteligência geofísica.";
     }
   }
 }
