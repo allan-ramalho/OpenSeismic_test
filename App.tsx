@@ -5,8 +5,7 @@ import {
   RotateCcw, FileUp, MessageSquare, Sliders, PlusSquare, 
   Activity, ChevronRight, FilePlus, Terminal, Trash2, Download,
   PanelLeft, PanelBottom, ChevronLeft, Edit2, Check, Save,
-  // Fix: Added Crosshair to the list of imported icons from lucide-react to fix line 266 error
-  Crosshair
+  Crosshair, Info, Layers
 } from 'lucide-react';
 import SeismicCanvas from './components/SeismicCanvas';
 import ChatPanel from './components/ChatPanel';
@@ -27,6 +26,7 @@ const App: React.FC = () => {
   const [showChat, setShowChat] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [bottomPanelOpen, setBottomPanelOpen] = useState(true);
+  const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [editingHorizonId, setEditingHorizonId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   
@@ -137,22 +137,25 @@ const App: React.FC = () => {
   const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    addLog(`IO: Parsing ${file.name}...`);
+    addLog(`IO: Initializing stream for ${file.name}...`);
     try {
       const dataset = await parseSegy(file);
       setRawDataset(dataset);
       setProcessedDataset(dataset);
-      addLog(`IO: Imported ${dataset.traces.length} traces.`);
+      addLog(`IO: Successfully mapped ${dataset.traces.length} traces.`);
     } catch(err) { 
-      addLog(`ERROR: Unsupported SEGY format.`);
+      addLog(`ERROR: Invalid or corrupt SEGY file.`);
       console.error(err);
+    } finally {
+      // Fix: Reset input value to allow re-importing same file
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
   const runFlow = async () => {
     if (isProcessing || !rawDataset) return;
     setIsProcessing(true);
-    addLog("KERNEL: Initializing processing flow...");
+    addLog("KERNEL: Processing sequence started...");
     const startTime = performance.now();
     try {
       let working: SeismicTrace[] = JSON.parse(JSON.stringify(rawDataset.traces));
@@ -171,23 +174,23 @@ const App: React.FC = () => {
         }
       }
       setProcessedDataset({ ...rawDataset, traces: working });
-      addLog(`KERNEL: Processed in ${(performance.now() - startTime).toFixed(1)}ms`);
-    } catch (e) { addLog(`ERROR: Flow execution failed.`); } finally { setIsProcessing(false); }
+      addLog(`KERNEL: Cycle complete in ${(performance.now() - startTime).toFixed(1)}ms`);
+    } catch (e) { addLog(`ERROR: Processing crash.`); } finally { setIsProcessing(false); }
   };
 
   return (
     <div className="flex h-screen w-screen bg-[#020617] text-slate-300 font-sans overflow-hidden">
       <input type="file" ref={fileInputRef} onChange={handleFileImport} accept=".sgy,.seg,.segy" className="hidden" />
 
-      {/* SIDEBAR PANEL */}
-      {sidebarOpen && (
+      {/* LEFT SIDEBAR */}
+      {sidebarOpen ? (
         <aside className="w-80 bg-[#0f172a] border-r border-white/5 flex flex-col shrink-0 z-30 shadow-2xl animate-in slide-in-from-left duration-300">
           <div className="p-6 border-b border-white/5 flex items-center justify-between bg-black/20">
             <div className="flex items-center gap-3">
               <Waves className="text-blue-500 w-6 h-6" />
               <span className="font-bold text-white text-lg tracking-tight">OSP Studio</span>
             </div>
-            <button onClick={() => setSidebarOpen(false)} className="p-1 hover:bg-white/5 rounded"><ChevronLeft className="w-4 h-4" /></button>
+            <button onClick={() => setSidebarOpen(false)} className="p-1 hover:bg-white/5 rounded text-slate-500"><ChevronLeft className="w-4 h-4" /></button>
           </div>
           
           <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-hide">
@@ -244,13 +247,17 @@ const App: React.FC = () => {
             </section>
           </div>
         </aside>
+      ) : (
+        <div className="w-12 bg-[#0f172a] border-r border-white/5 flex flex-col items-center py-6 gap-6 shadow-xl shrink-0">
+          <Waves className="text-blue-500 w-6 h-6" />
+          <button onClick={() => setSidebarOpen(true)} className="p-2 hover:bg-white/5 rounded-xl text-blue-500"><PanelLeft className="w-5 h-5" /></button>
+        </div>
       )}
 
       {/* MAIN VIEWPORT */}
       <main className="flex-1 flex flex-col min-w-0 bg-[#020617] relative">
         <header className="h-16 border-b border-white/5 px-8 flex items-center justify-between backdrop-blur-md bg-[#0f172a]/80 shrink-0 z-20 shadow-xl">
           <div className="flex items-center gap-4">
-            {!sidebarOpen && <button onClick={() => setSidebarOpen(true)} className="p-2 hover:bg-white/5 rounded-xl text-blue-500"><PanelLeft className="w-5 h-5" /></button>}
             <div className="flex bg-black/40 p-1 rounded-xl border border-white/5">
               <TabBtn active={displayConfig.activeTab === 'section'} icon={LayoutDashboard} label="Seismic Section" onClick={() => setDisplayConfig({...displayConfig, activeTab: 'section'})} />
               <TabBtn active={displayConfig.activeTab === 'avo'} icon={LineChart} label="AVO Analysis" onClick={() => setDisplayConfig({...displayConfig, activeTab: 'avo'})} />
@@ -268,13 +275,23 @@ const App: React.FC = () => {
               <Crosshair className="w-3.5 h-3.5 mr-2" /> {displayConfig.isPickerActive ? 'PICKER ON' : 'PICKER OFF'}
             </button>
             <button onClick={runFlow} disabled={isProcessing} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-xl text-[10px] font-black tracking-widest transition flex items-center gap-2 shadow-lg shadow-blue-600/20 disabled:opacity-50"><Play className={`w-3.5 h-3.5 ${isProcessing ? 'animate-spin' : ''}`} /> RUN ENGINE</button>
-            <button onClick={() => setShowChat(!showChat)} className="p-2.5 bg-slate-800 border border-white/5 rounded-xl text-slate-400 hover:text-white transition shadow-lg"><MessageSquare className="w-5 h-5" /></button>
+            <button onClick={() => setShowChat(!showChat)} className={`p-2.5 border rounded-xl transition shadow-lg ${showChat ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-white/5 text-slate-400 hover:text-white'}`}><MessageSquare className="w-5 h-5" /></button>
           </div>
         </header>
 
         <div className="flex-1 p-6 flex flex-row gap-6 overflow-hidden relative">
-          <div className="flex-1 flex flex-col gap-6 min-w-0 h-full">
-            <div className="flex-1 relative rounded-3xl overflow-hidden border border-white/5 bg-black shadow-2xl">
+          <div className="flex-1 flex flex-col gap-4 min-w-0 h-full">
+            
+            {/* METADATA CARDS */}
+            {processedDataset && (
+              <div className="grid grid-cols-3 gap-4 shrink-0 animate-in fade-in slide-in-from-top duration-700">
+                 <MetadataCard icon={Layers} label="Seismic Type" value="2D High-Res Section" color="text-blue-400" />
+                 <MetadataCard icon={Activity} label="Trace Count" value={processedDataset.traces.length.toLocaleString()} color="text-emerald-400" />
+                 <MetadataCard icon={Database} label="Sample Count" value={processedDataset.numSamples.toLocaleString()} color="text-amber-400" />
+              </div>
+            )}
+
+            <div className="flex-1 relative rounded-3xl overflow-hidden border border-white/5 bg-black shadow-2xl flex flex-col">
               {processedDataset ? (
                 <>
                   {displayConfig.activeTab === 'section' && (
@@ -293,7 +310,6 @@ const App: React.FC = () => {
                               </div>
                            </div>
                            <div className="flex-1 border-l border-b border-white/10 relative flex items-end p-12 bg-black/40 rounded-3xl shadow-inner overflow-hidden">
-                              {/* Grid lines for chart */}
                               <div className="absolute inset-0 grid grid-cols-4 grid-rows-4 opacity-5 pointer-events-none">
                                 {[...Array(16)].map((_, i) => <div key={i} className="border-r border-t border-white" />)}
                               </div>
@@ -336,7 +352,10 @@ const App: React.FC = () => {
                 <div className="h-full flex flex-col items-center justify-center text-slate-700 uppercase tracking-widest font-black text-xs space-y-4">
                   <Database className="w-16 h-16 opacity-5 animate-pulse" />
                   <span>PROJECT KERNEL STANDBY</span>
-                  <button onClick={() => fileInputRef.current?.click()} className="mt-4 px-6 py-2 bg-blue-600/10 border border-blue-500/20 text-blue-400 rounded-xl hover:bg-blue-600/20 transition">INITIALIZE WITH SEGY</button>
+                  <div className="flex gap-3">
+                    <button onClick={() => fileInputRef.current?.click()} className="px-6 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-500 transition shadow-xl shadow-blue-900/40">IMPORT SEGY</button>
+                    <button onClick={() => { const d = generateSyntheticSeismic(250, 1000); setRawDataset(d); setProcessedDataset(d); }} className="px-6 py-2 bg-slate-800 text-slate-400 rounded-xl hover:bg-slate-700 transition">GENERATE DEMO</button>
+                  </div>
                 </div>
               )}
             </div>
@@ -344,10 +363,14 @@ const App: React.FC = () => {
             {/* FLOW PANEL - COLLAPSIBLE */}
             <div className={`transition-all duration-500 ${bottomPanelOpen ? 'h-52' : 'h-12'} bg-[#0f172a] border border-white/5 rounded-3xl flex flex-col overflow-hidden shadow-2xl shrink-0 relative`}>
                <div className="px-5 py-3 border-b border-white/5 text-[9px] font-bold text-slate-600 uppercase flex items-center justify-between bg-black/20 shrink-0">
-                  <div className="flex items-center gap-2"><Settings className="w-3.5 h-3.5 text-blue-500" /> Active Processor Chain</div>
+                  <div className="flex items-center gap-2 cursor-pointer" onClick={() => setBottomPanelOpen(!bottomPanelOpen)}>
+                    <Settings className="w-3.5 h-3.5 text-blue-500" /> 
+                    Active Processor Chain 
+                    <span className="ml-2 text-[8px] bg-blue-600/20 px-1.5 py-0.5 rounded text-blue-400">{flow.length} Modules</span>
+                  </div>
                   <div className="flex items-center gap-4">
                     <button onClick={() => setFlow([])} className="hover:text-red-400 transition flex items-center gap-1 font-black"><RotateCcw className="w-3 h-3" /> FLUSH</button>
-                    <button onClick={() => setBottomPanelOpen(!bottomPanelOpen)} className="p-1 hover:bg-white/5 rounded transition">
+                    <button onClick={() => setBottomPanelOpen(!bottomPanelOpen)} className="p-1 hover:bg-white/5 rounded transition text-slate-500">
                       {bottomPanelOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
                     </button>
                   </div>
@@ -381,63 +404,74 @@ const App: React.FC = () => {
           </div>
 
           {/* INTERPRETATION & LOGS ASIDE */}
-          <aside className="w-80 flex flex-col gap-6 shrink-0 h-full animate-in slide-in-from-right duration-500">
-             <div className="bg-[#0f172a] border border-white/5 rounded-3xl flex-1 flex flex-col overflow-hidden shadow-2xl relative">
-                <div className="p-5 border-b border-white/5 flex items-center justify-between bg-black/10">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2"><Target className="w-4 h-4 text-blue-400" /> Interpretations</span>
-                  <button onClick={() => {
-                      const nid = Date.now().toString();
-                      const newH: Horizon = { id: nid, name: `Layer_${horizons.length+1}`, color: '#'+Math.floor(Math.random()*16777215).toString(16), points: [], isVisible: true };
-                      setHorizons([...horizons, newH]);
-                      setDisplayConfig(p => ({...p, activeHorizonId: nid}));
-                  }} className="p-1.5 bg-blue-600/10 text-blue-400 rounded-lg hover:bg-blue-600/20 transition"><Plus className="w-4 h-4" /></button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-hide">
-                  {horizons.map(h => (
-                    <div key={h.id} onClick={() => setDisplayConfig({...displayConfig, activeHorizonId: h.id})} className={`group p-4 rounded-2xl border transition-all cursor-pointer ${displayConfig.activeHorizonId === h.id ? 'bg-blue-600/10 border-blue-500/40 shadow-xl shadow-blue-900/10' : 'bg-slate-900/40 border-white/5 hover:border-white/10'}`}>
-                      <div className="flex items-center justify-between mb-3">
-                         <div className="flex items-center gap-3 overflow-hidden flex-1">
-                           <div className="w-3 h-3 rounded-full shrink-0 shadow-lg" style={{ backgroundColor: h.color }} />
-                           {editingHorizonId === h.id ? (
-                             <div className="flex items-center gap-1 flex-1">
-                                <input autoFocus value={editingName} onChange={e => setEditingName(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveHorizonName()} className="bg-slate-800 border-none rounded px-1 text-[11px] font-bold text-white w-full outline-none" />
-                                <button onClick={saveHorizonName} className="text-blue-400 p-0.5"><Check className="w-3 h-3" /></button>
-                             </div>
-                           ) : (
-                             <span className={`text-[11px] font-bold truncate ${displayConfig.activeHorizonId === h.id ? 'text-white' : 'text-slate-500'}`}>{h.name}</span>
-                           )}
-                         </div>
-                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={(e) => { e.stopPropagation(); handleRenameHorizon(h.id); }} className="p-1 hover:text-white"><Edit2 className="w-3 h-3" /></button>
-                            <button onClick={(e) => { e.stopPropagation(); setHorizons(horizons.filter(x => x.id !== h.id)); }} className="p-1 hover:text-red-500"><X className="w-3 h-3" /></button>
-                         </div>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div className="text-[8px] font-black text-slate-600 uppercase tracking-widest">{h.points.length} Samples Picked</div>
-                        <div className="flex gap-1">
-                           <button onClick={(e) => { e.stopPropagation(); exportHorizonData(h, 'csv'); }} className="p-1 text-[7px] font-bold bg-white/5 rounded hover:bg-white/10" title="CSV">CSV</button>
-                           <button onClick={(e) => { e.stopPropagation(); exportHorizonData(h, 'dat'); }} className="p-1 text-[7px] font-bold bg-white/5 rounded hover:bg-white/10" title="DAT">DAT</button>
-                           <button onClick={(e) => { e.stopPropagation(); exportHorizonData(h, 'json'); }} className="p-1 text-[7px] font-bold bg-white/5 rounded hover:bg-white/10" title="JSON">JSON</button>
+          {rightPanelOpen ? (
+            <aside className="w-80 flex flex-col gap-6 shrink-0 h-full animate-in slide-in-from-right duration-500">
+               <div className="bg-[#0f172a] border border-white/5 rounded-3xl flex-1 flex flex-col overflow-hidden shadow-2xl relative">
+                  <div className="p-5 border-b border-white/5 flex items-center justify-between bg-black/10">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2"><Target className="w-4 h-4 text-blue-400" /> Interpretations</span>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => {
+                          const nid = Date.now().toString();
+                          const newH: Horizon = { id: nid, name: `Layer_${horizons.length+1}`, color: '#'+Math.floor(Math.random()*16777215).toString(16), points: [], isVisible: true };
+                          setHorizons([...horizons, newH]);
+                          setDisplayConfig(p => ({...p, activeHorizonId: nid}));
+                      }} className="p-1.5 bg-blue-600/10 text-blue-400 rounded-lg hover:bg-blue-600/20 transition"><Plus className="w-4 h-4" /></button>
+                      <button onClick={() => setRightPanelOpen(false)} className="p-1.5 hover:bg-white/5 rounded transition text-slate-500"><ChevronRight className="w-4 h-4" /></button>
+                    </div>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-hide">
+                    {horizons.map(h => (
+                      <div key={h.id} onClick={() => setDisplayConfig({...displayConfig, activeHorizonId: h.id})} className={`group p-4 rounded-2xl border transition-all cursor-pointer ${displayConfig.activeHorizonId === h.id ? 'bg-blue-600/10 border-blue-500/40 shadow-xl shadow-blue-900/10' : 'bg-slate-900/40 border-white/5 hover:border-white/10'}`}>
+                        <div className="flex items-center justify-between mb-3">
+                           <div className="flex items-center gap-3 overflow-hidden flex-1">
+                             <div className="w-3 h-3 rounded-full shrink-0 shadow-lg" style={{ backgroundColor: h.color }} />
+                             {editingHorizonId === h.id ? (
+                               <div className="flex items-center gap-1 flex-1">
+                                  <input autoFocus value={editingName} onChange={e => setEditingName(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveHorizonName()} className="bg-slate-800 border-none rounded px-1 text-[11px] font-bold text-white w-full outline-none" />
+                                  <button onClick={saveHorizonName} className="text-blue-400 p-0.5"><Check className="w-3 h-3" /></button>
+                               </div>
+                             ) : (
+                               <span className={`text-[11px] font-bold truncate ${displayConfig.activeHorizonId === h.id ? 'text-white' : 'text-slate-500'}`}>{h.name}</span>
+                             )}
+                           </div>
+                           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={(e) => { e.stopPropagation(); handleRenameHorizon(h.id); }} className="p-1 hover:text-white"><Edit2 className="w-3 h-3" /></button>
+                              <button onClick={(e) => { e.stopPropagation(); setHorizons(horizons.filter(x => x.id !== h.id)); }} className="p-1 hover:text-red-500"><X className="w-3 h-3" /></button>
+                           </div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className="text-[8px] font-black text-slate-600 uppercase tracking-widest">{h.points.length} Samples Picked</div>
+                          <div className="flex gap-1">
+                             <button onClick={(e) => { e.stopPropagation(); exportHorizonData(h, 'csv'); }} className="p-1 text-[7px] font-bold bg-white/5 rounded hover:bg-white/10" title="CSV">CSV</button>
+                             <button onClick={(e) => { e.stopPropagation(); exportHorizonData(h, 'dat'); }} className="p-1 text-[7px] font-bold bg-white/5 rounded hover:bg-white/10" title="DAT">DAT</button>
+                             <button onClick={(e) => { e.stopPropagation(); exportHorizonData(h, 'json'); }} className="p-1 text-[7px] font-bold bg-white/5 rounded hover:bg-white/10" title="JSON">JSON</button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-             </div>
+                    ))}
+                  </div>
+               </div>
 
-             <div className="h-44 bg-[#0f172a] border border-white/5 rounded-3xl flex flex-col overflow-hidden shadow-2xl shrink-0">
-                <div className="px-5 py-3 border-b border-white/5 text-[9px] font-bold text-slate-600 uppercase flex items-center gap-2 bg-black/20 shrink-0"><Terminal className="w-3.5 h-3.5 text-blue-500" /> Kernel Feed (Logs)</div>
-                <div className="flex-1 p-4 font-mono text-[9.5px] text-slate-500 overflow-y-auto scrollbar-hide space-y-1.5 bg-black/40">
-                  {logs.map((l, i) => <div key={i} className="flex gap-2"><span className="text-blue-900 font-bold opacity-30">#</span>{l}</div>)}
-                </div>
-             </div>
-          </aside>
+               <div className="h-44 bg-[#0f172a] border border-white/5 rounded-3xl flex flex-col overflow-hidden shadow-2xl shrink-0 relative group/logs">
+                  <div className="px-5 py-3 border-b border-white/5 text-[9px] font-bold text-slate-600 uppercase flex items-center justify-between bg-black/20 shrink-0">
+                    <div className="flex items-center gap-2"><Terminal className="w-3.5 h-3.5 text-blue-500" /> Kernel Feed</div>
+                  </div>
+                  <div className="flex-1 p-4 font-mono text-[9.5px] text-slate-500 overflow-y-auto scrollbar-hide space-y-1.5 bg-black/40">
+                    {logs.map((l, i) => <div key={i} className="flex gap-2"><span className="text-blue-900 font-bold opacity-30">#</span>{l}</div>)}
+                  </div>
+               </div>
+            </aside>
+          ) : (
+            <aside className="w-12 flex flex-col items-center py-6 gap-6 bg-[#0f172a] border-l border-white/5 shrink-0 shadow-2xl">
+              <button onClick={() => setRightPanelOpen(true)} className="p-2 hover:bg-white/5 rounded-xl text-blue-500"><Target className="w-5 h-5" /></button>
+            </aside>
+          )}
         </div>
       </main>
 
       {/* CHAT OVERLAY */}
       {showChat && (
-        <div className="fixed inset-y-0 right-0 w-[420px] <chatmessages /> animate-in slide-in-from-right duration-300">
+        <div className="fixed inset-y-0 right-0 w-[420px] z-50 shadow-2xl border-l border-white/10 bg-[#0c0c0e] animate-in slide-in-from-right duration-300">
            <ChatPanel processingState={displayConfig} activeFlow={flow} messages={chatMessages} onSetMessages={setChatMessages} />
            <button onClick={() => setShowChat(false)} className="absolute top-1/2 -left-12 w-12 h-12 bg-[#0f172a] border border-white/10 rounded-l-2xl flex items-center justify-center text-slate-400 hover:text-white transition shadow-2xl border-r-0"><ChevronRight className="w-6 h-6" /></button>
         </div>
@@ -450,6 +484,18 @@ const TabBtn: React.FC<{active: boolean, icon: any, label: string, onClick: () =
   <button onClick={onClick} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase transition flex items-center gap-2.5 tracking-widest ${active ? 'bg-blue-600 text-white shadow-xl shadow-blue-900/30' : 'text-slate-600 hover:text-slate-200 hover:bg-white/5'}`}>
     <Icon className="w-3.5 h-3.5" /> {label}
   </button>
+);
+
+const MetadataCard: React.FC<{icon: any, label: string, value: string, color: string}> = ({ icon: Icon, label, value, color }) => (
+  <div className="bg-[#0f172a]/80 backdrop-blur border border-white/5 p-4 rounded-3xl flex items-center gap-4 shadow-xl">
+    <div className={`p-2.5 bg-white/5 rounded-2xl ${color}`}>
+      <Icon className="w-5 h-5" />
+    </div>
+    <div>
+      <div className="text-[8px] font-black text-slate-600 uppercase tracking-widest">{label}</div>
+      <div className="text-xs font-bold text-slate-200">{value}</div>
+    </div>
+  </div>
 );
 
 export default App;
